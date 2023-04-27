@@ -25,7 +25,6 @@ class FlutterBluePlus {
     _channel.setMethodCallHandler((MethodCall call) async {
       _methodStreamController.add(call);
     });
-
     setLogLevel(logLevel);
   }
 
@@ -184,6 +183,119 @@ class FlutterBluePlus {
       }
       _scanResults.add(list);
       return result;
+    });
+  }
+
+  Stream<ScanResult> scan2({
+    ScanMode scanMode = ScanMode.lowLatency,
+    List<Guid> withServices = const [],
+    List<Guid> withDevices = const [],
+    List<String> macAddresses = const [],
+    Duration? timeout,
+    bool allowDuplicates = false,
+  }) async* {
+    var settings = protos.ScanSettings.create()
+      ..androidScanMode = scanMode.value
+      ..allowDuplicates = allowDuplicates
+      ..macAddresses.addAll(macAddresses)
+      ..serviceUuids.addAll(withServices.map((g) => g.toString()).toList());
+
+    if (_isScanning.value == true) {
+      throw Exception('Another scan is already in progress.');
+    }
+
+    // Emit to isScanning
+    _isScanning.add(true);
+
+    final killStreams = <Stream>[];
+    killStreams.add(_stopScanPill);
+    if (timeout != null) {
+      killStreams.add(Rx.timer(null, timeout));
+    }
+
+    // Clear scan results list
+    _scanResults.add(<ScanResult>[]);
+
+    try {
+      await _channel.invokeMethod('startScan', settings.writeToBuffer());
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error starting scan.');
+      }
+      _stopScanPill.add(null);
+      _isScanning.add(false);
+      rethrow;
+    }
+
+    yield* FlutterBluePlus.instance._methodStream
+        .where((m) => m.method == "ScanResult")
+        .map((m) => m.arguments)
+        .takeUntil(Rx.merge(killStreams))
+        .doOnDone(stopScan)
+        .map((buffer) => protos.ScanResult.fromBuffer(buffer))
+        .map((p) {
+      final result = ScanResult.fromProto(p);
+      final list = _scanResults.value;
+      int index = list.indexOf(result);
+      if (index != -1) {
+        list[index] = result;
+      } else {
+        list.add(result);
+      }
+      _scanResults.add(list);
+      return result;
+    });
+  }
+
+  startScan2({
+    ScanMode scanMode = ScanMode.lowLatency,
+    List<Guid> withServices = const [],
+    List<Guid> withDevices = const [],
+    List<String> macAddresses = const [],
+    bool allowDuplicates = false,
+  }) async {
+    var settings = protos.ScanSettings.create()
+      ..androidScanMode = scanMode.value
+      ..allowDuplicates = allowDuplicates
+      ..macAddresses.addAll(macAddresses)
+      ..serviceUuids.addAll(withServices.map((g) => g.toString()).toList());
+
+    if (_isScanning.value == true) {
+      throw Exception('Another scan is already in progress.');
+    }
+
+    // Emit to isScanning
+    _isScanning.add(true);
+
+    // Clear scan results list
+    _scanResults.add(<ScanResult>[]);
+
+    try {
+      await _channel.invokeMethod('startScan', settings.writeToBuffer());
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error starting scan.');
+      }
+      _isScanning.add(false);
+      rethrow;
+    }
+  }
+
+  StreamSubscription startListen() {
+    return FlutterBluePlus.instance._methodStream
+    .where((m) => m.method == "ScanResult")
+    .map((m) => m.arguments)
+    .map((buffer) => protos.ScanResult.fromBuffer(buffer))
+    .listen((p) {
+      final result = ScanResult.fromProto(p);
+      final list = _scanResults.value;
+      int index = list.indexOf(result);
+      if (index != -1) {
+        list[index] = result;
+      } else {
+        list.add(result);
+      }
+      _scanResults.add(list);
     });
   }
 
